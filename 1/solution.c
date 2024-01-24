@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "libcoro.h"
+#include "merge_sort.h"
 
 /**
  * You can compile and run this code using the commands:
@@ -61,6 +62,53 @@ coroutine_func_f(void *context)
 	printf("%s: yield\n", name);
 	coro_yield();
 
+    FILE *input_file = fopen(name, "r");
+    if (!input_file){
+        perror("Error opening input file");
+        my_context_delete(ctx);
+        return 1;
+    }
+
+    int *array = NULL;
+    int size = 0;
+    int number;
+
+    while (fscanf(input_file, "%d", &number) == 1){
+        array = realloc(array, (size + 1) * sizeof(int));
+        if (array == NULL) {
+            perror("Error reallocating memory");
+            return 1;
+        }
+        array[size++] = number;
+    }
+
+    mergeSort(array, 0, size -1);
+
+    fclose(input_file);
+
+    FILE *temp_output_file = fopen("temp_sorted_file.txt", "w");
+    if (!temp_output_file){
+        perror("Error opening temporary output file");
+        free(array);
+        my_context_delete(ctx);
+        return 1;
+    }
+
+    // Write the sorted data to the temporary output file
+    for (int i = 0; i < size; ++i) {
+        fprintf(temp_output_file, "%d ", array[i]);
+    }
+
+    fclose(temp_output_file);  // Close the temporary output file
+
+    // Replace the original input file with the temporary output file
+    if (rename("temp_sorted_file.txt", name) != 0) {
+        perror("Error renaming temporary file");
+        free(array);
+        my_context_delete(ctx);
+        return 1;
+    }
+
 	printf("%s: switch count %lld\n", name, coro_switch_count(this));
 	printf("%s: yield\n", name);
 	coro_yield();
@@ -78,26 +126,17 @@ coroutine_func_f(void *context)
 int
 main(int argc, char **argv)
 {
-	/* Delete these suppressions when start using the args. */
-	(void)argc;
-	(void)argv;
+	int num_files = argc - 1;
+
 	/* Initialize our coroutine global cooperative scheduler. */
 	coro_sched_init();
+
 	/* Start several coroutines. */
-	for (int i = 0; i < 3; ++i) {
-		/*
-		 * The coroutines can take any 'void *' interpretation of which
-		 * depends on what you want. Here as an example I give them
-		 * some names.
-		 */
-		char name[16];
-		sprintf(name, "coro_%d", i);
-		/*
-		 * I have to copy the name. Otherwise all the coroutines would
-		 * have the same name when they finally start.
-		 */
-		coro_new(coroutine_func_f, my_context_new(name));
-	}
+    for (int i = 1; i <= num_files; ++i) {
+        struct my_context *ctx = my_context_new(argv[i]); // pass the file name to the context
+        coro_new(coroutine_func_f, ctx);
+    }
+
 	/* Wait for all the coroutines to end. */
 	struct coro *c;
 	while ((c = coro_sched_wait()) != NULL) {
@@ -111,7 +150,40 @@ main(int argc, char **argv)
 	}
 	/* All coroutines have finished. */
 
-	/* IMPLEMENT MERGING OF THE SORTED ARRAYS HERE. */
+    int* merged_array = NULL;
+    int number;
+    int size = 0;
+
+    for (int i = 0; i < num_files; ++i) {
+        FILE *temp_sorted_file = fopen(argv[i], "r");
+        if (temp_sorted_file == NULL) {
+            perror("Error opening file");
+            return 1;
+        }
+        while (fscanf(temp_sorted_file, "%d", &number) == 1){
+            merged_array = realloc(merged_array, (size + 1)*sizeof(int));
+            merged_array[size++] = number;
+            if (merged_array == NULL) {
+                perror("Error reallocating memory");
+                return 1; // Return an error code on memory allocation failure
+            }
+        }
+        fclose(temp_sorted_file);
+    }
+
+    mergeSort(merged_array, 0, size-1);
+
+    FILE *output_file = fopen("result.txt", "w");
+    if (output_file == NULL) {
+        perror("Error opening output file");
+        return 1; // Return an error code on file open failure
+    }
+    for (int i = 0; i < size; ++i) {
+        fprintf(output_file, "%d ", merged_array[i]);
+    }
+
+    free(merged_array);
+    fclose(output_file);
 
 	return 0;
 }
