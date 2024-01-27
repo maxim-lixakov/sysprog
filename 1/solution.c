@@ -87,6 +87,7 @@ coroutine_func_f(void *context)
     fclose(input_file);
 
     FILE *temp_output_file = fopen("temp_sorted_file.txt", "w");
+
     if (!temp_output_file){
         perror("Error opening temporary output file");
         free(array);
@@ -154,8 +155,9 @@ main(int argc, char **argv)
     int number;
     int size = 0;
 
-    for (int i = 0; i < num_files; ++i) {
-        FILE *temp_sorted_file = fopen(argv[i], "r");
+    for (int i = 1; i <= num_files; ++i) {
+        char *name = argv[i];
+        FILE *temp_sorted_file = fopen(name, "r");
         if (temp_sorted_file == NULL) {
             perror("Error opening file");
             return 1;
