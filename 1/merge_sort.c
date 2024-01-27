@@ -3,7 +3,6 @@
 //
 
 #include "merge_sort.h"
-#include <stdio.h>
 
 
 void merge(int arr[], int l, int m, int r){

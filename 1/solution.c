@@ -95,14 +95,13 @@ coroutine_func_f(void *context)
         return 1;
     }
 
-    // Write the sorted data to the temporary output file
     for (int i = 0; i < size; ++i) {
         fprintf(temp_output_file, "%d ", array[i]);
     }
 
-    fclose(temp_output_file);  // Close the temporary output file
+    fclose(temp_output_file);
 
-    // Replace the original input file with the temporary output file
+    // replace the original input file with the temporary output file
     if (rename("temp_sorted_file.txt", name) != 0) {
         perror("Error renaming temporary file");
         free(array);
@@ -178,7 +177,7 @@ main(int argc, char **argv)
     FILE *output_file = fopen("result.txt", "w");
     if (output_file == NULL) {
         perror("Error opening output file");
-        return 1; // Return an error code on file open failure
+        return 1;
     }
     for (int i = 0; i < size; ++i) {
         fprintf(output_file, "%d ", merged_array[i]);
