@@ -3,12 +3,11 @@
 #include <assert.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <stdlib.h>
 
 static void
 execute_command_line(const struct command_line *line)
 {
-	/* REPLACE THIS CODE WITH ACTUAL COMMAND EXECUTION */
-
 	assert(line != NULL);
 	printf("================================\n");
 	printf("Command line:\n");
@@ -27,10 +26,35 @@ execute_command_line(const struct command_line *line)
 	const struct expr *e = line->head;
 	while (e != NULL) {
 		if (e->type == EXPR_TYPE_COMMAND) {
-			printf("\tCommand: %s", e->cmd.exe);
-			for (uint32_t i = 0; i < e->cmd.arg_count; ++i)
-				printf(" %s", e->cmd.args[i]);
-			printf("\n");
+            pid_t pid = fork();
+
+            if (pid == -1){
+                printf("Forked process failed");
+                exit(EXIT_FAILURE);
+            }
+            else if (pid == 0){
+                // child task
+                char* args[e->cmd.arg_count + 2];
+                args[0] = e->cmd.exe;
+                printf("\tCommand: %s", e->cmd.exe);
+                for (uint32_t i = 0; i < e->cmd.arg_count; ++i){
+                    printf(" %s", e->cmd.args[i]);
+                    args[i+1] = e->cmd.args[i];
+                }
+                printf("\n");
+                args[e->cmd.arg_count + 1] = NULL;
+
+                if (execvp(args[0], args) == -1){
+                    printf("Command execution failed");
+                    exit(EXIT_FAILURE);
+                }
+                exit(EXIT_SUCCESS);
+            }
+            else{
+                // parent task
+                int status;
+                waitpid(pid, &status, 0);
+            }
 		} else if (e->type == EXPR_TYPE_PIPE) {
 			printf("\tPIPE\n");
 		} else if (e->type == EXPR_TYPE_AND) {

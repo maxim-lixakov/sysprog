@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "libcoro.h"
+#include <time.h>
 #include "merge_sort.h"
 
 /**
@@ -13,7 +14,8 @@
 
 struct my_context {
 	char *name;
-	/** ADD HERE YOUR OWN MEMBERS, SUCH AS FILE NAME, WORK TIME, ... */
+    struct timespec start_time;
+    struct timespec end_time;
 };
 
 static struct my_context *
@@ -57,6 +59,8 @@ coroutine_func_f(void *context)
 	struct coro *this = coro_this();
 	struct my_context *ctx = context;
 	char *name = ctx->name;
+
+    clock_gettime(CLOCK_MONOTONIC, &ctx->start_time);
 	printf("Started coroutine %s\n", name);
 	printf("%s: switch count %lld\n", name, coro_switch_count(this));
 	printf("%s: yield\n", name);
@@ -117,15 +121,21 @@ coroutine_func_f(void *context)
 	other_function(name, 1);
 	printf("%s: switch count after other function %lld\n", name,
 	       coro_switch_count(this));
-
-	my_context_delete(ctx);
 	/* This will be returned from coro_status(). */
+
+    clock_gettime(CLOCK_MONOTONIC, &ctx->end_time);
+    double elapsed_time = (ctx->end_time.tv_sec - ctx->start_time.tv_sec) +
+                          (ctx->end_time.tv_nsec - ctx->start_time.tv_nsec) / 1e9;
+    printf("%s: Execution time: %.3f seconds\n", name, elapsed_time);
+
+    my_context_delete(ctx);
 	return 0;
 }
 
-int
-main(int argc, char **argv)
-{
+int main(int argc, char **argv){
+    struct timespec program_start, program_end;
+    clock_gettime(CLOCK_MONOTONIC, &program_start);
+
 	int num_files = argc - 1;
 
 	/* Initialize our coroutine global cooperative scheduler. */
@@ -186,5 +196,11 @@ main(int argc, char **argv)
     free(merged_array);
     fclose(output_file);
 
-	return 0;
+    clock_gettime(CLOCK_MONOTONIC, &program_end);
+    double program_elapsed = (program_end.tv_sec - program_start.tv_sec) +
+                             (program_end.tv_nsec - program_start.tv_nsec) / 1e9;
+    printf("Total program execution time: %.3f seconds\n", program_elapsed);
+
+
+    return 0;
 }
