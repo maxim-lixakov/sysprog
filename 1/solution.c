@@ -3,7 +3,6 @@
 #include <string.h>
 #include "libcoro.h"
 #include <time.h>
-#include "merge_sort.h"
 
 /**
  * You can compile and run this code using the commands:
@@ -11,6 +10,68 @@
  * $> gcc solution.c libcoro.c
  * $> ./a.out
  */
+
+static void mergeSort(int *array, int left, int right);
+static void merge(int *array, int left, int middle, int right);
+
+void merge(int arr[], int l, int m, int r) {
+    int n1 = m - l + 1;
+    int n2 = r - m;
+
+    int *L = malloc(n1 * sizeof(int));
+    int *R = malloc(n2 * sizeof(int));
+
+
+    for (int i = 0; i < n1; i++)
+        L[i] = arr[l + i];
+    for (int j = 0; j < n2; j++)
+        R[j] = arr[m + 1 + j];
+
+
+    int i = 0, j = 0, k = l;
+    while (i < n1 && j < n2) {
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+//        printf("Context switch before merging at %ld.%09ld\n", now.tv_sec, now.tv_nsec);
+        coro_yield();
+        if (L[i] <= R[j]) {
+            arr[k] = L[i++];
+        } else {
+            arr[k] = R[j++];
+        }
+        k++;
+    }
+
+
+    while (i < n1) {
+        coro_yield();
+        arr[k] = L[i];
+        i++;
+        k++;
+    }
+
+    while (j < n2) {
+        coro_yield();
+        arr[k] = R[j];
+        j++;
+        k++;
+    }
+
+    free(L);
+    free(R);
+}
+
+void mergeSort(int arr[], int l, int r) {
+    if (l < r) {
+        int m = l + (r - l) / 2;
+
+        mergeSort(arr, l, m);
+        mergeSort(arr, m + 1, r);
+
+        coro_yield();
+        merge(arr, l, m, r);
+    }
+}
 
 struct my_context {
 	char *name;
@@ -38,90 +99,65 @@ my_context_delete(struct my_context *ctx)
  * the example. You can split your code into multiple functions, that usually
  * helps to keep the individual code blocks simple.
  */
-static void
-other_function(const char *name, int depth)
-{
-	printf("%s: entered function, depth = %d\n", name, depth);
-	coro_yield();
-	if (depth < 3)
-		other_function(name, depth + 1);
-}
+//static void
+//other_function(const char *name, int depth)
+//{
+//	printf("%s: entered function, depth = %d\n", name, depth);
+//	coro_yield();
+//	if (depth < 3)
+//		other_function(name, depth + 1);
+//}
 
 /**
  * Coroutine body. This code is executed by all the coroutines. Here you
  * implement your solution, sort each individual file.
  */
-static int
-coroutine_func_f(void *context)
-{
-	/* IMPLEMENT SORTING OF INDIVIDUAL FILES HERE. */
-
-	struct coro *this = coro_this();
-	struct my_context *ctx = context;
-	char *name = ctx->name;
+static int coroutine_func_f(void *context) {
+    struct my_context *ctx = context;
+    char *name = ctx->name;
 
     clock_gettime(CLOCK_MONOTONIC, &ctx->start_time);
-	printf("Started coroutine %s\n", name);
-	printf("%s: switch count %lld\n", name, coro_switch_count(this));
-	printf("%s: yield\n", name);
-	coro_yield();
+    printf("Started coroutine %s\n", name);
 
+    // Open file and read numbers
     FILE *input_file = fopen(name, "r");
-    if (!input_file){
+    if (!input_file) {
         perror("Error opening input file");
         my_context_delete(ctx);
         return 1;
     }
 
     int *array = NULL;
-    int size = 0;
-    int number;
-
-    while (fscanf(input_file, "%d", &number) == 1){
+    int size = 0, number;
+    while (fscanf(input_file, "%d", &number) == 1) {
         array = realloc(array, (size + 1) * sizeof(int));
-        if (array == NULL) {
+        if (!array) {
             perror("Error reallocating memory");
+            fclose(input_file);
+            my_context_delete(ctx);
             return 1;
         }
         array[size++] = number;
     }
-
-    mergeSort(array, 0, size -1);
-
     fclose(input_file);
 
-    FILE *temp_output_file = fopen("temp_sorted_file.txt", "w");
+    // Sort the array
+    mergeSort(array, 0, size - 1);
 
-    if (!temp_output_file){
-        perror("Error opening temporary output file");
+    // Save the sorted array to the same file
+    FILE *output_file = fopen(name, "w");
+    if (!output_file) {
+        perror("Error opening output file");
         free(array);
         my_context_delete(ctx);
         return 1;
     }
-
     for (int i = 0; i < size; ++i) {
-        fprintf(temp_output_file, "%d ", array[i]);
+        fprintf(output_file, "%d ", array[i]);
     }
+    fclose(output_file);
 
-    fclose(temp_output_file);
-
-    // replace the original input file with the temporary output file
-    if (rename("temp_sorted_file.txt", name) != 0) {
-        perror("Error renaming temporary file");
-        free(array);
-        my_context_delete(ctx);
-        return 1;
-    }
-
-	printf("%s: switch count %lld\n", name, coro_switch_count(this));
-	printf("%s: yield\n", name);
-	coro_yield();
-
-	printf("%s: switch count %lld\n", name, coro_switch_count(this));
-	other_function(name, 1);
-	printf("%s: switch count after other function %lld\n", name,
-	       coro_switch_count(this));
-	/* This will be returned from coro_status(). */
+    free(array);
 
     clock_gettime(CLOCK_MONOTONIC, &ctx->end_time);
     double elapsed_time = (ctx->end_time.tv_sec - ctx->start_time.tv_sec) +
@@ -129,78 +165,48 @@ coroutine_func_f(void *context)
     printf("%s: Execution time: %.3f seconds\n", name, elapsed_time);
 
     my_context_delete(ctx);
-	return 0;
+    return 0;
 }
 
-int main(int argc, char **argv){
+int main(int argc, char **argv) {
     struct timespec program_start, program_end;
     clock_gettime(CLOCK_MONOTONIC, &program_start);
 
-	int num_files = argc - 1;
+    if (argc < 2) {
+        fprintf(stderr, "Usage: %s <file1> [<file2> ...]\n", argv[0]);
+        return 1;
+    }
 
-	/* Initialize our coroutine global cooperative scheduler. */
-	coro_sched_init();
+    int num_files = argc - 1;
 
-	/* Start several coroutines. */
+    // Initialize the coroutine global cooperative scheduler.
+    coro_sched_init();
+
+    // Start coroutines for each valid file argument.
     for (int i = 1; i <= num_files; ++i) {
-        struct my_context *ctx = my_context_new(argv[i]); // pass the file name to the context
+        if (argv[i][0] == '-') {
+            printf("Skipping invalid argument: %s\n", argv[i]);
+            continue; // Skip arguments starting with '-'
+        }
+        struct my_context *ctx = my_context_new(argv[i]); // Pass the file name to the context.
+        if (!ctx) {
+            fprintf(stderr, "Failed to create context for: %s\n", argv[i]);
+            continue;
+        }
         coro_new(coroutine_func_f, ctx);
     }
 
-	/* Wait for all the coroutines to end. */
-	struct coro *c;
-	while ((c = coro_sched_wait()) != NULL) {
-		/*
-		 * Each 'wait' returns a finished coroutine with which you can
-		 * do anything you want. Like check its exit status, for
-		 * example. Don't forget to free the coroutine afterwards.
-		 */
-		printf("Finished %d\n", coro_status(c));
-		coro_delete(c);
-	}
-	/* All coroutines have finished. */
-
-    int* merged_array = NULL;
-    int number;
-    int size = 0;
-
-    for (int i = 1; i <= num_files; ++i) {
-        char *name = argv[i];
-        FILE *temp_sorted_file = fopen(name, "r");
-        if (temp_sorted_file == NULL) {
-            perror("Error opening file");
-            return 1;
-        }
-        while (fscanf(temp_sorted_file, "%d", &number) == 1){
-            merged_array = realloc(merged_array, (size + 1)*sizeof(int));
-            merged_array[size++] = number;
-            if (merged_array == NULL) {
-                perror("Error reallocating memory");
-                return 1; // Return an error code on memory allocation failure
-            }
-        }
-        fclose(temp_sorted_file);
+    // Wait for all the coroutines to end.
+    struct coro *c;
+    while ((c = coro_sched_wait()) != NULL) {
+        printf("Finished %d\n", coro_status(c));
+        coro_delete(c);
     }
-
-    mergeSort(merged_array, 0, size-1);
-
-    FILE *output_file = fopen("result.txt", "w");
-    if (output_file == NULL) {
-        perror("Error opening output file");
-        return 1;
-    }
-    for (int i = 0; i < size; ++i) {
-        fprintf(output_file, "%d ", merged_array[i]);
-    }
-
-    free(merged_array);
-    fclose(output_file);
 
     clock_gettime(CLOCK_MONOTONIC, &program_end);
     double program_elapsed = (program_end.tv_sec - program_start.tv_sec) +
                              (program_end.tv_nsec - program_start.tv_nsec) / 1e9;
     printf("Total program execution time: %.3f seconds\n", program_elapsed);
-
 
     return 0;
 }
