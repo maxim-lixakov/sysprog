@@ -11,7 +11,7 @@
  * $> ./a.out
  */
 
-
+static long total_work_time = 0;
 struct my_context {
     char *name;
     struct timespec start_time;
@@ -155,10 +155,12 @@ static int coroutine_func_f(void *context) {
     free(array);
 
     clock_gettime(CLOCK_MONOTONIC, &ctx->end_time);
-    double elapsed_time = (ctx->end_time.tv_sec - ctx->start_time.tv_sec) +
-                          (ctx->end_time.tv_nsec - ctx->start_time.tv_nsec) / 1e9;
-    printf("%s: Execution time: %.3f seconds\n", name, elapsed_time);
+    long work_time = (ctx->end_time.tv_sec - ctx->start_time.tv_sec) * 1000000 +
+                     (ctx->end_time.tv_nsec - ctx->start_time.tv_nsec) / 1000;
 
+    total_work_time += work_time;
+
+    printf("%s: Execution time: %.3f seconds\n", ctx->name, (double)work_time / 1000000);
     printf("Coroutine %s switch count: %d\n", ctx->name, ctx->switch_count);
     my_context_delete(ctx);
     return 0;
@@ -200,9 +202,7 @@ int main(int argc, char **argv) {
     }
 
     clock_gettime(CLOCK_MONOTONIC, &program_end);
-    double program_elapsed = (program_end.tv_sec - program_start.tv_sec) +
-                             (program_end.tv_nsec - program_start.tv_nsec) / 1e9;
-    printf("Total program execution time: %.3f seconds\n", program_elapsed);
+    printf("Total program execution time: %.3f seconds\n", (double)total_work_time / 1000000);
 
     return 0;
 }
