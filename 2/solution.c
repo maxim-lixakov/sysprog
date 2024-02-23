@@ -35,28 +35,36 @@ static struct ExecutionResult execute_command_line(const struct command_line *li
             if (pid == -1) {
                 perror("fork");
                 exit(EXIT_FAILURE);
-            } else if (pid == 0) {
+            } else if (pid == 0) { // Child process
                 if (last_fd != -1) {
                     dup2(last_fd, STDIN_FILENO);
                     close(last_fd);
+                }
+
+                int out_fd = STDOUT_FILENO; // Corrected this line
+                if (e->next == NULL || e->next->type != EXPR_TYPE_PIPE) {
+                    if (line->out_type == OUTPUT_TYPE_FILE_NEW) {
+                        out_fd = open(line->out_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                    } else if (line->out_type == OUTPUT_TYPE_FILE_APPEND) {
+                        out_fd = open(line->out_file, O_WRONLY | O_CREAT | O_APPEND, 0644);
+                    }
+                    if (out_fd == -1) {
+                        perror("open");
+                        exit(EXIT_FAILURE);
+                    }
+                    dup2(out_fd, STDOUT_FILENO);
+                    if (out_fd != STDOUT_FILENO) {
+                        close(out_fd);
+                    }
                 }
 
                 if (e->next && e->next->type == EXPR_TYPE_PIPE) {
                     close(pipefd[0]);
                     dup2(pipefd[1], STDOUT_FILENO);
                     close(pipefd[1]);
-                } else {
-                    if (line->out_type == OUTPUT_TYPE_FILE_NEW) {
-                        int out_fd = open(line->out_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                        dup2(out_fd, STDOUT_FILENO);
-                        close(out_fd);
-                    } else if (line->out_type == OUTPUT_TYPE_FILE_APPEND) {
-                        int out_fd = open(line->out_file, O_WRONLY | O_CREAT | O_APPEND, 0644);
-                        dup2(out_fd, STDOUT_FILENO);
-                        close(out_fd);
-                    }
                 }
 
+                // Ensure args is declared before any conditional logic
                 char *args[e->cmd.arg_count + 2];
                 args[0] = e->cmd.exe;
                 for (uint32_t i = 0; i < e->cmd.arg_count; ++i) {
@@ -67,7 +75,7 @@ static struct ExecutionResult execute_command_line(const struct command_line *li
                 execvp(args[0], args);
                 perror("execvp");
                 exit(EXIT_FAILURE);
-            } else {
+            } else { // Parent process
                 if (last_fd != -1) {
                     close(last_fd);
                 }
