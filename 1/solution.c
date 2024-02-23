@@ -11,29 +11,51 @@
  * $> ./a.out
  */
 
-static void mergeSort(int *array, int left, int right);
-static void merge(int *array, int left, int middle, int right);
 
-void merge(int arr[], int l, int m, int r) {
+struct my_context {
+    char *name;
+    struct timespec start_time;
+    struct timespec end_time;
+    int switch_count; // Счетчик переключений корутины
+};
+
+static void mergeSort(int *array, int left, int right, struct my_context *ctx);
+static void merge(int *array, int left, int middle, int right, struct my_context *ctx);
+static struct my_context *my_context_new(const char *name);
+static void my_context_delete(struct my_context *ctx);
+
+static struct my_context *my_context_new(const char *name) {
+    struct my_context *ctx = malloc(sizeof(*ctx));
+    ctx->name = strdup(name);
+    ctx->switch_count = 0;
+    return ctx;
+}
+
+static void my_context_delete(struct my_context *ctx) {
+    free(ctx->name);
+    free(ctx);
+}
+
+
+void merge(int arr[], int l, int m, int r, struct my_context *ctx) {
+    int i, j, k;
     int n1 = m - l + 1;
     int n2 = r - m;
 
     int *L = malloc(n1 * sizeof(int));
     int *R = malloc(n2 * sizeof(int));
 
-
-    for (int i = 0; i < n1; i++)
+    for (i = 0; i < n1; i++)
         L[i] = arr[l + i];
-    for (int j = 0; j < n2; j++)
+    for (j = 0; j < n2; j++)
         R[j] = arr[m + 1 + j];
 
-
-    int i = 0, j = 0, k = l;
+    i = 0;
+    j = 0;
+    k = l;
     while (i < n1 && j < n2) {
-        struct timespec now;
-        clock_gettime(CLOCK_MONOTONIC, &now);
-//        printf("Context switch before merging at %ld.%09ld\n", now.tv_sec, now.tv_nsec);
-        coro_yield();
+        coro_yield(); // Переключение корутины
+        ctx->switch_count++; // Увеличение счетчика переключений
         if (L[i] <= R[j]) {
             arr[k] = L[i++];
         } else {
@@ -42,56 +64,29 @@ void merge(int arr[], int l, int m, int r) {
         k++;
     }
 
-
     while (i < n1) {
-        coro_yield();
-        arr[k] = L[i];
-        i++;
-        k++;
+        coro_yield(); // Переключение корутины
+        ctx->switch_count++; // Увеличение счетчика переключений
+        arr[k++] = L[i++];
     }
 
     while (j < n2) {
-        coro_yield();
-        arr[k] = R[j];
-        j++;
-        k++;
+        coro_yield(); // Переключение корутины
+        ctx->switch_count++; // Увеличение счетчика переключений
+        arr[k++] = R[j++];
     }
 
     free(L);
     free(R);
 }
 
-void mergeSort(int arr[], int l, int r) {
+void mergeSort(int arr[], int l, int r, struct my_context *ctx) {
     if (l < r) {
         int m = l + (r - l) / 2;
-
-        mergeSort(arr, l, m);
-        mergeSort(arr, m + 1, r);
-
-        coro_yield();
-        merge(arr, l, m, r);
+        mergeSort(arr, l, m, ctx);
+        mergeSort(arr, m + 1, r, ctx);
+        merge(arr, l, m, r, ctx);
     }
-}
-
-struct my_context {
-	char *name;
-    struct timespec start_time;
-    struct timespec end_time;
-};
-
-static struct my_context *
-my_context_new(const char *name)
-{
-	struct my_context *ctx = malloc(sizeof(*ctx));
-	ctx->name = strdup(name);
-	return ctx;
-}
-
-static void
-my_context_delete(struct my_context *ctx)
-{
-	free(ctx->name);
-	free(ctx);
 }
 
 /**
@@ -142,7 +137,7 @@ static int coroutine_func_f(void *context) {
     fclose(input_file);
 
     // Sort the array
-    mergeSort(array, 0, size - 1);
+    mergeSort(array, 0, size - 1, ctx);
 
     // Save the sorted array to the same file
     FILE *output_file = fopen(name, "w");
@@ -164,6 +159,7 @@ static int coroutine_func_f(void *context) {
                           (ctx->end_time.tv_nsec - ctx->start_time.tv_nsec) / 1e9;
     printf("%s: Execution time: %.3f seconds\n", name, elapsed_time);
 
+    printf("Coroutine %s switch count: %d\n", ctx->name, ctx->switch_count);
     my_context_delete(ctx);
     return 0;
 }
