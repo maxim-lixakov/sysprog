@@ -11,12 +11,15 @@
  * $> ./a.out
  */
 
-static long total_work_time = 0;
 struct my_context {
     char *name;
     struct timespec start_time;
     struct timespec end_time;
+    struct timespec active_start_time; // Время начала активной работы
+    long active_work_time; // Активное время работы
     int switch_count; // Счетчик переключений корутины
+    struct timespec idle_start_time; // Время начала простоя
+    long total_idle_time; // Общее время простоя
 };
 
 static void mergeSort(int *array, int left, int right, struct my_context *ctx);
@@ -28,6 +31,9 @@ static struct my_context *my_context_new(const char *name) {
     struct my_context *ctx = malloc(sizeof(*ctx));
     ctx->name = strdup(name);
     ctx->switch_count = 0;
+    ctx->active_work_time = 0; // Инициализация активного времени работы
+    ctx->total_idle_time = 0; // Инициализация общего времени простоя
+    clock_gettime(CLOCK_MONOTONIC, &ctx->active_start_time); // Запоминаем время начала активной работы
     return ctx;
 }
 
@@ -54,7 +60,14 @@ void merge(int arr[], int l, int m, int r, struct my_context *ctx) {
     j = 0;
     k = l;
     while (i < n1 && j < n2) {
-        coro_yield(); // Переключение корутины
+
+        clock_gettime(CLOCK_MONOTONIC, &ctx->idle_start_time);
+        coro_yield();
+        struct timespec idle_end_time;
+        clock_gettime(CLOCK_MONOTONIC, &idle_end_time);
+
+        long idle_time = (idle_end_time.tv_sec - ctx->idle_start_time.tv_sec) * 1000000 + (idle_end_time.tv_nsec - ctx->idle_start_time.tv_nsec) / 1000;
+        ctx->total_idle_time += idle_time;
         ctx->switch_count++; // Увеличение счетчика переключений
         if (L[i] <= R[j]) {
             arr[k] = L[i++];
@@ -155,12 +168,13 @@ static int coroutine_func_f(void *context) {
     free(array);
 
     clock_gettime(CLOCK_MONOTONIC, &ctx->end_time);
-    long work_time = (ctx->end_time.tv_sec - ctx->start_time.tv_sec) * 1000000 +
-                     (ctx->end_time.tv_nsec - ctx->start_time.tv_nsec) / 1000;
 
-    total_work_time += work_time;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    long active_time = (now.tv_sec - ctx->active_start_time.tv_sec) * 1000000 + (now.tv_nsec - ctx->active_start_time.tv_nsec) / 1000 - ctx->total_idle_time;
+    ctx->active_work_time += active_time; // Добавляем к общему активному времени работы
 
-    printf("%s: Execution time: %.3f seconds\n", ctx->name, (double)work_time / 1000000);
+    printf("%s: Active execution time: %.3f seconds\n", ctx->name, (double)ctx->active_work_time / 1000000);
     printf("Coroutine %s switch count: %d\n", ctx->name, ctx->switch_count);
     my_context_delete(ctx);
     return 0;
@@ -202,7 +216,9 @@ int main(int argc, char **argv) {
     }
 
     clock_gettime(CLOCK_MONOTONIC, &program_end);
-    printf("Total program execution time: %.3f seconds\n", (double)total_work_time / 1000000);
+    long total_program_time = (program_end.tv_sec - program_start.tv_sec) * 1000000 +
+                              (program_end.tv_nsec - program_start.tv_nsec) / 1000;
+    printf("Total program execution time: %.3f seconds\n", (double)total_program_time / 1000000);
 
     return 0;
 }
