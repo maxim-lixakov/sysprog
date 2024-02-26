@@ -20,6 +20,7 @@ struct my_context {
     int switch_count; // Счетчик переключений корутины
     struct timespec idle_start_time; // Время начала простоя
     long total_idle_time; // Общее время простоя
+    struct timespec last_idle_start_time;
 };
 
 static void mergeSort(int *array, int left, int right, struct my_context *ctx);
@@ -42,6 +43,20 @@ static void my_context_delete(struct my_context *ctx) {
     free(ctx);
 }
 
+void yield_start(struct my_context *ctx) {
+    clock_gettime(CLOCK_MONOTONIC, &ctx->last_idle_start_time);
+}
+
+void yield_end(struct my_context *ctx) {
+    struct timespec idle_end_time;
+    clock_gettime(CLOCK_MONOTONIC, &idle_end_time);
+
+    long idle_time = (idle_end_time.tv_sec - ctx->last_idle_start_time.tv_sec) * 1000000 +
+                     (idle_end_time.tv_nsec - ctx->last_idle_start_time.tv_nsec) / 1000;
+    ctx->total_idle_time += idle_time;
+    ctx->switch_count++;
+}
+
 
 void merge(int arr[], int l, int m, int r, struct my_context *ctx) {
     int i, j, k;
@@ -56,19 +71,12 @@ void merge(int arr[], int l, int m, int r, struct my_context *ctx) {
     for (j = 0; j < n2; j++)
         R[j] = arr[m + 1 + j];
 
-    i = 0;
-    j = 0;
-    k = l;
+    i = 0; j = 0; k = l;
     while (i < n1 && j < n2) {
-
-        clock_gettime(CLOCK_MONOTONIC, &ctx->idle_start_time);
+        yield_start(ctx);
         coro_yield();
-        struct timespec idle_end_time;
-        clock_gettime(CLOCK_MONOTONIC, &idle_end_time);
+        yield_end(ctx);
 
-        long idle_time = (idle_end_time.tv_sec - ctx->idle_start_time.tv_sec) * 1000000 + (idle_end_time.tv_nsec - ctx->idle_start_time.tv_nsec) / 1000;
-        ctx->total_idle_time += idle_time;
-        ctx->switch_count++; // Увеличение счетчика переключений
         if (L[i] <= R[j]) {
             arr[k] = L[i++];
         } else {
@@ -78,14 +86,16 @@ void merge(int arr[], int l, int m, int r, struct my_context *ctx) {
     }
 
     while (i < n1) {
-        coro_yield(); // Переключение корутины
-        ctx->switch_count++; // Увеличение счетчика переключений
+        yield_start(ctx);
+        coro_yield();
+        yield_end(ctx);
         arr[k++] = L[i++];
     }
 
     while (j < n2) {
-        coro_yield(); // Переключение корутины
-        ctx->switch_count++; // Увеличение счетчика переключений
+        yield_start(ctx);
+        coro_yield();
+        yield_end(ctx);
         arr[k++] = R[j++];
     }
 
@@ -169,10 +179,11 @@ static int coroutine_func_f(void *context) {
 
     clock_gettime(CLOCK_MONOTONIC, &ctx->end_time);
 
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    long active_time = (now.tv_sec - ctx->active_start_time.tv_sec) * 1000000 + (now.tv_nsec - ctx->active_start_time.tv_nsec) / 1000 - ctx->total_idle_time;
-    ctx->active_work_time += active_time; // Добавляем к общему активному времени работы
+    // Вычисляем общее время выполнения корутины
+    long total_time = (ctx->end_time.tv_sec - ctx->start_time.tv_sec) * 1000000 +
+                      (ctx->end_time.tv_nsec - ctx->start_time.tv_nsec) / 1000;
+    // Вычитаем общее время простоя из общего времени выполнения для получения активного времени работы
+    ctx->active_work_time = total_time - ctx->total_idle_time;
 
     printf("%s: Active execution time: %.3f seconds\n", ctx->name, (double)ctx->active_work_time / 1000000);
     printf("Coroutine %s switch count: %d\n", ctx->name, ctx->switch_count);
