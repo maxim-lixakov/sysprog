@@ -277,10 +277,27 @@ ufs_read(int fd, char *buf, size_t size)
 int
 ufs_close(int fd)
 {
-	/* IMPLEMENT THIS FUNCTION */
-	(void)fd;
-	ufs_error_code = UFS_ERR_NOT_IMPLEMENTED;
-	return -1;
+    // check if the file descriptor is valid.
+    if (fd < 0 || fd >= file_descriptor_capacity || file_descriptors[fd] == NULL) {
+        ufs_error_code = UFS_ERR_NO_FILE;
+        return -1;
+    }
+
+    // retrieve the file descriptor and associated file.
+    struct filedesc *fdesc = file_descriptors[fd];
+    struct file *file = fdesc->file;
+
+    // decrement the reference count for the file.
+    if (--file->refs == 0) {
+        // may be it is needed to implement some future logic there
+    }
+
+    // free or reset the file descriptor entry.
+    free(fdesc);
+    file_descriptors[fd] = NULL; // mark the file descriptor as available.
+
+    ufs_error_code = UFS_ERR_NO_ERR;
+    return 0;
 }
 
 int
