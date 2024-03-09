@@ -356,4 +356,45 @@ ufs_delete(const char *filename)
 void
 ufs_destroy(void)
 {
+    // free all files and their blocks.
+    struct file *current_file = file_list;
+    while (current_file != NULL) {
+        // save next file pointer because we're going to free the current file.
+        struct file *next_file = current_file->next;
+
+        // free all blocks associated with this file.
+        struct block *current_block = current_file->block_list;
+        while (current_block != NULL) {
+            struct block *next_block = current_block->next;
+            free(current_block->memory);
+            free(current_block);
+            current_block = next_block;
+        }
+
+        // free the file's metadata (e.g., name) if dynamically allocated.
+        free(current_file->name);
+
+        // free the file structure itself.
+        free(current_file);
+
+        current_file = next_file;
+    }
+    file_list = NULL;
+
+    // free the file descriptors array if it's dynamically allocated.
+    if (file_descriptors != NULL) {
+        for (int i = 0; i < file_descriptor_capacity; i++) {
+            // if using dynamic allocation for file descriptors, free them.
+            free(file_descriptors[i]);
+        }
+        free(file_descriptors);
+        file_descriptors = NULL;
+    }
+
+    // reset file descriptor count and capacity.
+    file_descriptor_count = 0;
+    file_descriptor_capacity = 0;
+
+    // reset the global error code.
+    ufs_error_code = UFS_ERR_NO_ERR;
 }
