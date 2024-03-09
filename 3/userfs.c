@@ -235,12 +235,43 @@ ufs_write(int fd, const char *buf, size_t size)
 ssize_t
 ufs_read(int fd, char *buf, size_t size)
 {
-	/* IMPLEMENT THIS FUNCTION */
-	(void)fd;
-	(void)buf;
-	(void)size;
-	ufs_error_code = UFS_ERR_NOT_IMPLEMENTED;
-	return -1;
+    // validate the file descriptor.
+    if (fd < 0 || fd >= file_descriptor_capacity || file_descriptors[fd] == NULL) {
+        ufs_error_code = UFS_ERR_NO_FILE;
+        return -1;
+    }
+
+    struct filedesc *fdesc = file_descriptors[fd];
+    struct file *file = fdesc->file;
+    if (!file || !file->block_list) {
+        // the file has no content.
+        ufs_error_code = UFS_ERR_NO_FILE;
+        return -1;
+    }
+
+    struct block *current_block = file->block_list;
+    ssize_t total_read = 0;
+    ssize_t bytes_to_read = 0;
+
+    // start reading data.
+    while (size > 0 && current_block != NULL) {
+        // calculate the number of bytes to read from the current block.
+        bytes_to_read = current_block->occupied < (int)size ? current_block->occupied : (int)size;
+
+        // copy data from the current block to the buffer.
+        memcpy(buf, current_block->memory, bytes_to_read);
+        size -= bytes_to_read; // decrease the remaining size to read.
+        total_read += bytes_to_read; // increase the total number of bytes read.
+        buf += bytes_to_read; // move the buffer pointer forward.
+
+        // move to the next block if there is still data to read.
+        if (size > 0) {
+            current_block = current_block->next;
+        }
+    }
+
+    ufs_error_code = UFS_ERR_NO_ERR;
+    return total_read;
 }
 
 int
