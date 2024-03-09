@@ -40,6 +40,9 @@ struct file {
 	struct file *next;
 	struct file *prev;
 
+    /** Flag to mark the file as deleted. */
+    int is_deleted;
+
 	/* PUT HERE OTHER MEMBERS */
 };
 
@@ -303,10 +306,51 @@ ufs_close(int fd)
 int
 ufs_delete(const char *filename)
 {
-	/* IMPLEMENT THIS FUNCTION */
-	(void)filename;
-	ufs_error_code = UFS_ERR_NOT_IMPLEMENTED;
-	return -1;
+    struct file *current = file_list, *prev = NULL;
+
+    // search for the file by its name.
+    while (current != NULL && strcmp(current->name, filename) != 0) {
+        prev = current;
+        current = current->next;
+    }
+
+    // ff the file was not found.
+    if (current == NULL) {
+        ufs_error_code = UFS_ERR_NO_FILE;
+        return -1;
+    }
+
+    // if the file is currently opened by any descriptor.
+    if (current->refs > 0) {
+        // TODO: Optionally may be it is needed to mark the file as deleted for later removal when all refs are closed.
+        // TODO: check later condition in ufs_close:     if (--file->refs == 0) { do_smth;}
+        current->is_deleted = 1;
+        ufs_error_code = UFS_ERR_NO_ERR;
+        return 0;
+    }
+
+    // no open references, proceed with deletion.
+    // First, free all data blocks.
+    struct block *block = current->block_list;
+    while (block != NULL) {
+        struct block *next_block = block->next;
+        free(block->memory);  // free the data within the block.
+        free(block);          // free the block itself.
+        block = next_block;
+    }
+
+    // remove the file from the list.
+    if (prev != NULL) prev->next = current->next;
+    else file_list = current->next; // file was the first in the list.
+
+    if (current->next != NULL) current->next->prev = prev;
+
+    // free the file name and the file structure.
+    free(current->name);
+    free(current);
+
+    ufs_error_code = UFS_ERR_NO_ERR;
+    return 0;
 }
 
 void
