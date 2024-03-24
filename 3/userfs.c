@@ -15,7 +15,7 @@ struct block {
 	/** Block memory. */
 	char *memory;
 	/** How many bytes are occupied. */
-	int occupied;
+	size_t occupied;
 	/** Next block in the file. */
 	struct block *next;
 	/** Previous block in the file. */
@@ -51,8 +51,10 @@ static struct file *file_list = NULL;
 
 struct filedesc {
 	struct file *file;
+    struct block *current_block;
+    size_t offset_in_block;
 
-	/* PUT HERE OTHER MEMBERS */
+    /* PUT HERE OTHER MEMBERS */
 };
 
 /**
@@ -157,77 +159,73 @@ int ufs_open(const char *filename, int flags) {
     return fd;
 }
 
-ssize_t
-ufs_write(int fd, const char *buf, size_t size)
-{
-    // check if the file descriptor is valid.
+ssize_t ufs_write(int fd, const char *buf, size_t size) {
     if (fd < 0 || fd >= file_descriptor_capacity || file_descriptors[fd] == NULL) {
         ufs_error_code = UFS_ERR_NO_FILE;
         return -1;
     }
 
     struct filedesc *fdesc = file_descriptors[fd];
-    struct file *file = fdesc->file;
-    struct block *current_block = file->block_list;
-    ssize_t written = 0;
-
-    // check if there's any block in the file.
-    if (!current_block) {
-        // allocate the first block if it doesn't exist.
-        file->block_list = malloc(sizeof(struct block));
-        if (!file->block_list) {
+    struct block *current_block = fdesc->current_block;
+    if (current_block == NULL) {
+        // handle the case where there's no block to write to (new file or file without content)
+        current_block = (struct block *)malloc(sizeof(struct block));
+        if (!current_block) {
             ufs_error_code = UFS_ERR_NO_MEM;
             return -1;
         }
-        current_block = file->block_list;
-        current_block->memory = malloc(BLOCK_SIZE);
+        current_block->memory = (char *)malloc(BLOCK_SIZE);
         if (!current_block->memory) {
             free(current_block);
-            file->block_list = NULL;
             ufs_error_code = UFS_ERR_NO_MEM;
             return -1;
         }
         current_block->occupied = 0;
         current_block->next = NULL;
-        current_block->prev = NULL;
-        file->last_block = current_block;
-    } else {
-        // find the last block to continue writing.
-        while (current_block->next != NULL) {
-            current_block = current_block->next;
+        current_block->prev = fdesc->file->last_block;
+        if (fdesc->file->last_block) {
+            fdesc->file->last_block->next = current_block;
+        } else {
+            fdesc->file->block_list = current_block; // first block in the file
         }
+        fdesc->file->last_block = current_block;
+        fdesc->current_block = current_block;
+        fdesc->offset_in_block = 0;
     }
 
-    // start writing data.
+    ssize_t written = 0;
     while (size > 0) {
-        size_t available_space = BLOCK_SIZE - current_block->occupied;
-        size_t to_write = size < available_space ? size : available_space;
-        memcpy(current_block->memory + current_block->occupied, buf, to_write);
+        size_t available_space = BLOCK_SIZE - fdesc->offset_in_block;
+        size_t bytes_to_write = (size < available_space) ? size : available_space;
 
-        current_block->occupied += to_write;
-        written += to_write;
-        buf += to_write;
-        size -= to_write;
+        memcpy(current_block->memory + fdesc->offset_in_block, buf, bytes_to_write);
+        current_block->occupied += bytes_to_write;
+        fdesc->offset_in_block += bytes_to_write;
+        buf += bytes_to_write;
+        size -= bytes_to_write;
+        written += bytes_to_write;
 
-        // check if we need to allocate a new block.
-        if (size > 0) {
-            current_block->next = malloc(sizeof(struct block));
-            if (!current_block->next) {
+        if (available_space == bytes_to_write && size > 0) {
+            // need to allocate a new block
+            struct block *new_block = (struct block *)malloc(sizeof(struct block));
+            if (!new_block) {
                 ufs_error_code = UFS_ERR_NO_MEM;
-                return written; // return the amount written so far.
+                return written;
             }
-            current_block->next->prev = current_block;
-            current_block = current_block->next;
-            current_block->memory = malloc(BLOCK_SIZE);
-            if (!current_block->memory) {
-                current_block->prev->next = NULL;
-                free(current_block);
+            new_block->memory = (char *)malloc(BLOCK_SIZE);
+            if (!new_block->memory) {
+                free(new_block);
                 ufs_error_code = UFS_ERR_NO_MEM;
-                return written; // return the amount written so far.
+                return written;
             }
-            current_block->occupied = 0;
-            current_block->next = NULL;
-            file->last_block = current_block;
+            new_block->occupied = 0;
+            new_block->next = NULL;
+            new_block->prev = current_block;
+            current_block->next = new_block;
+            fdesc->file->last_block = new_block;
+            current_block = new_block;
+            fdesc->current_block = new_block;
+            fdesc->offset_in_block = 0;
         }
     }
 
@@ -235,41 +233,31 @@ ufs_write(int fd, const char *buf, size_t size)
     return written;
 }
 
-ssize_t
-ufs_read(int fd, char *buf, size_t size)
-{
-    // validate the file descriptor.
+
+ssize_t ufs_read(int fd, char *buf, size_t size) {
     if (fd < 0 || fd >= file_descriptor_capacity || file_descriptors[fd] == NULL) {
         ufs_error_code = UFS_ERR_NO_FILE;
         return -1;
     }
 
     struct filedesc *fdesc = file_descriptors[fd];
-    struct file *file = fdesc->file;
-    if (!file || !file->block_list) {
-        // the file has no content.
-        ufs_error_code = UFS_ERR_NO_FILE;
-        return -1;
-    }
-
-    struct block *current_block = file->block_list;
+    struct block *current_block = fdesc->current_block;
     ssize_t total_read = 0;
-    ssize_t bytes_to_read = 0;
 
-    // start reading data.
     while (size > 0 && current_block != NULL) {
-        // calculate the number of bytes to read from the current block.
-        bytes_to_read = current_block->occupied < (int)size ? current_block->occupied : (int)size;
+        size_t remaining_in_block = current_block->occupied - fdesc->offset_in_block;
+        size_t bytes_to_read = (size < remaining_in_block) ? size : remaining_in_block;
 
-        // copy data from the current block to the buffer.
-        memcpy(buf, current_block->memory, bytes_to_read);
-        size -= bytes_to_read; // decrease the remaining size to read.
-        total_read += bytes_to_read; // increase the total number of bytes read.
-        buf += bytes_to_read; // move the buffer pointer forward.
+        memcpy(buf, current_block->memory + fdesc->offset_in_block, bytes_to_read);
+        buf += bytes_to_read;
+        size -= bytes_to_read;
+        total_read += bytes_to_read;
+        fdesc->offset_in_block += bytes_to_read;
 
-        // move to the next block if there is still data to read.
-        if (size > 0) {
+        if (fdesc->offset_in_block == current_block->occupied) {
             current_block = current_block->next;
+            fdesc->current_block = current_block;
+            fdesc->offset_in_block = 0;
         }
     }
 
